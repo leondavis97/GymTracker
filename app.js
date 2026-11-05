@@ -201,8 +201,10 @@ function viewHome() {
     <div class="row between"><h2>Diese Woche</h2><span class="${A.thisWeek >= goal ? 'badge good' : 'muted'}">${A.thisWeek}/${goal} Trainings${A.thisWeek >= goal ? ' ✓' : ''}</span></div>
     <div class="week">${days}</div>
   </section>
-  <button class="big primary" data-a="startFree">Training starten</button>
-  ${S.plans.length ? `<div class="section-title">Aus Plan starten</div><div class="chips">${S.plans.map(p => `<button class="chip" data-a="startPlan" data-id="${p.id}">${esc(p.name)}</button>`).join('')}</div>` : ''}
+  <button class="big primary" data-a="startChoice">Training starten</button>
+  <div class="section-title">Deine Pläne</div>
+  ${S.plans.length ? `<div class="card stack">${planRows()}<button class="link" data-a="newPlanHome">+ Neuen Plan erstellen</button></div>`
+    : `<button class="list-item" data-a="newPlanHome"><span><b>+ Plan erstellen</b><br><small>z. B. Tag A / Tag B, dann startest du mit einem Tipp</small></span><span>›</span></button>`}
   ${last ? `<div class="section-title">Letztes Training</div>${histCard(last, A)}` : `<div class="card empty"><i>🏋️</i>Noch keine Trainings. Starte dein erstes und sammle XP!</div>`}
   ${prs.length ? `<div class="section-title">Neue Rekorde</div><div class="card stack">${prs.map(p => { const b = A.best[p.id]; return `<div class="row between"><span>⭐ ${esc(exById(p.id).name)}</span><span class="muted small">${fmtDate(p.w.start)}</span></div>`; }).join('')}</div>` : ''}`;
 }
@@ -262,7 +264,7 @@ function histCard(w, A) {
     </button>
     ${open ? `<div class="hist-sets">${w.items.map(it => `<div><b>${p.prs.includes(it.exId) ? '⭐ ' : ''}${esc(exById(it.exId).name)}</b>${it.subFor ? ` <span class="muted small">⇄ statt ${esc(exById(it.subFor).name)}</span>` : ''}<br><span class="muted">${it.sets.map(s => setStr(it.exId, s)).join(' · ')}</span>${it.note ? `<br><span class="muted small">📝 ${esc(it.note)}</span>` : ''}</div>`).join('')}
       ${w.note ? `<div class="muted">📝 ${esc(w.note)}</div>` : ''}</div>
-      <div class="row" style="margin-top:10px"><button class="btn" data-a="repeatWorkout" data-id="${w.id}">Wiederholen</button><span class="grow"></span><button class="btn danger" data-a="deleteWorkout" data-id="${w.id}">Löschen</button></div>` : ''}
+      <div class="row" style="margin-top:10px"><button class="btn" data-a="repeatWorkout" data-id="${w.id}">Wiederholen</button><button class="btn" data-a="editTime" data-id="${w.id}">Zeit ändern</button><span class="grow"></span><button class="btn danger" data-a="deleteWorkout" data-id="${w.id}">Löschen</button></div>` : ''}
   </section>`;
 }
 
@@ -441,10 +443,20 @@ function sheetHTML() {
     <button class="big primary" data-a="saveLoc">Speichern</button>`;
   if (s.type === 'confirm') return `<h2 style="margin:4px 0 16px">${esc(s.msg)}</h2>
     <div class="row"><button class="big secondary grow" style="border-style:solid" data-a="confirmNo">Abbrechen</button><button class="big primary grow" data-a="confirmYes">${esc(s.ok)}</button></div>`;
+  if (s.type === 'startChoice') return `<h2>Welcher Plan?</h2><div style="margin-top:12px">${planRows()}</div>
+    <button class="list-item" data-a="startFree"><span><b>Ohne Plan</b><br><small>Übungen frei hinzufügen</small></span><span>›</span></button>
+    <button class="link" data-a="newPlanHome">+ Neuen Plan erstellen</button>`;
+  if (s.type === 'time') return `<h2>Zeit ändern</h2>
+    <label class="field" for="tDate">Datum</label><input id="tDate" type="date" value="${s.date}">
+    <div class="row"><div class="grow"><label class="field" for="tTime">Startzeit</label><input id="tTime" type="time" value="${s.time}"></div>
+    <div class="grow"><label class="field" for="tDur">Dauer (Minuten)</label><input id="tDur" inputmode="numeric" value="${s.dur}" placeholder="z. B. 75"></div></div>
+    <button class="big primary" data-a="saveTime">Speichern</button>`;
   if (s.type === 'summary') return `<div class="celebrate"><div class="em">${s.levelUp ? '🎉' : '💪'}</div>
     <h2>${s.levelUp ? `Level up! Jetzt Level ${s.level}` : 'Training gespeichert'}</h2>
     <div class="xp">+${s.xp} XP</div>
-    <div class="muted">${s.sets} Sätze · ${fmtKg(s.vol)} · ${fmtDur(s.dur)}</div></div>
+    <div class="muted">${s.sets} Sätze · ${fmtKg(s.vol)} · ${fmtDur(s.dur)}</div>
+    ${s.dur > 3 * 3600e3 ? `<div class="target" style="margin-top:6px">Ganz schön lang. Vergessen zu beenden?</div>` : ''}
+    <button class="link" data-a="editTime" data-id="${s.wid}">Zeit korrigieren</button></div>
     ${s.prs.length ? `<div class="section-title">Neue Rekorde</div><div class="card stack">${s.prs.map(id => `<div>⭐ ${esc(exById(id).name)}</div>`).join('')}</div>` : ''}
     ${s.ach.length ? `<div class="section-title">Neue Erfolge</div><div class="ach">${s.ach.map(id => { const a = ACH.find(x => x[0] === id); return `<div><i>${a[1]}</i>${a[2]}</div>`; }).join('')}</div>` : ''}
     <button class="big primary" data-a="closeSheet">Weiter</button>`;
@@ -523,9 +535,18 @@ async function detectLoc(silent) {
   } catch { if (!silent) toast('Standort nicht verfügbar. Bitte Ort manuell wählen.'); }
 }
 
+/* ========== Pläne: zuletzt genutzt & Vorschlag ========== */
+const planLast = p => { const w = sorted().reverse().find(w => w.planId === p.id || (!w.planId && w.plan === p.name)); return w ? w.start : 0; };
+const nextPlanId = () => S.plans.length ? [...S.plans].sort((a, b) => planLast(a) - planLast(b))[0].id : null;
+function planRows() {
+  const nx = nextPlanId();
+  return S.plans.map(p => { const l = planLast(p);
+    return `<button class="list-item" data-a="startPlan" data-id="${p.id}"><span><b>${esc(p.name)}</b>${p.id === nx && S.plans.length > 1 ? ' <span class="badge">Als Nächstes</span>' : ''}<br><small>${p.items.length} Übungen · ${l ? 'zuletzt ' + fmtDate(l, { day: 'numeric', month: 'short', year: new Date(l).getFullYear() === new Date().getFullYear() ? undefined : 'numeric' }) : 'noch nie'}</small></span><span class="badge good">Start ›</span></button>`; }).join('');
+}
+
 /* ========== Aktionen ========== */
-function newWorkout(items) {
-  S.active = { id: uid(), start: Date.now(), end: null, locationId: '', note: '', items };
+function newWorkout(items, plan) {
+  S.active = { id: uid(), start: Date.now(), end: null, locationId: '', note: '', items, ...(plan ? { planId: plan.id, plan: plan.name } : {}) };
   ui.view = 'home'; save(); render();
   if (S.settings.autoLoc && S.locations.some(l => l.lat)) detectLoc(true);
 }
@@ -551,15 +572,29 @@ async function finish() {
   const before = analyze();
   S.workouts.push(w); S.active = null; ui.rest = null;
   const after = analyze(), p = after.per[w.id];
-  ui.sheet = { type: 'summary', xp: after.xp - before.xp, sets: p.sets, vol: p.vol, dur: w.end - w.start, prs: p.prs,
+  ui.sheet = { type: 'summary', wid: w.id, xp: after.xp - before.xp, sets: p.sets, vol: p.vol, dur: w.end - w.start, prs: p.prs,
     ach: after.achieved.filter(a => !before.achieved.includes(a)), levelUp: after.level.level > before.level.level, level: after.level.level };
   save(); render();
 }
 
 const ACT = {
-  go: d => { ui.view = d.view; ui.editPlan = d.view === 'plans' ? ui.editPlan : null; render(); },
-  startFree: () => newWorkout([]),
-  startPlan: async d => { const p = S.plans.find(x => x.id === d.id); if (!p) return; if (S.active && !await ask('Es läuft bereits ein Training. Ersetzen?')) return; newWorkout(p.items.map(i => itemFrom(i.exId, Math.max(1, num(i.sets) || 3), String(i.reps || '')))); },
+  go: d => { ui.view = d.view; ui.planReturn = false; ui.editPlan = d.view === 'plans' ? ui.editPlan : null; render(); },
+  startFree: () => { ui.sheet = null; newWorkout([]); },
+  startPlan: async d => { const p = S.plans.find(x => x.id === d.id); if (!p) return; if (S.active && !await ask('Es läuft bereits ein Training. Ersetzen?')) return; ui.sheet = null; newWorkout(p.items.map(i => itemFrom(i.exId, Math.max(1, num(i.sets) || 3), String(i.reps || ''))), p); },
+  startChoice: () => { if (!S.plans.length) return newWorkout([]); ui.sheet = { type: 'startChoice' }; render(); },
+  newPlanHome: () => { ui.sheet = null; ui.planReturn = true; ui.view = 'plans'; ui.editPlan = { id: uid(), name: '', items: [] }; render(); },
+  editTime: d => { const w = S.workouts.find(x => x.id === d.id); if (!w) return;
+    const dt = new Date(w.start), pad = n => String(n).padStart(2, '0');
+    ui.sheet = { type: 'time', id: w.id, date: `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`, time: w.noTime ? '' : `${pad(dt.getHours())}:${pad(dt.getMinutes())}`,
+      dur: w.end && !w.noTime ? Math.max(1, Math.round((w.end - w.start) / 6e4)) : '' }; render(); },
+  saveTime: () => {
+    const w = S.workouts.find(x => x.id === ui.sheet.id), date = $('#tDate').value, time = $('#tTime').value, dur = Math.round(num($('#tDur').value));
+    if (!date) return toast('Bitte ein Datum wählen');
+    if (dur < 0 || dur > 600) return toast('Dauer bitte in Minuten (max. 600)');
+    const [y, m, dd] = date.split('-').map(Number), [hh, mi] = (time || '18:00').split(':').map(Number);
+    w.start = new Date(y, m - 1, dd, hh, mi).getTime(); w.noTime = !time && !dur; w.end = dur ? w.start + dur * 6e4 : (w.noTime ? null : w.start);
+    ui.sheet = null; save(); render(); toast('Zeit gespeichert');
+  },
   repeatWorkout: async d => { const w = S.workouts.find(x => x.id === d.id); if (!w) return; if (S.active && !await ask('Es läuft bereits ein Training. Ersetzen?')) return; newWorkout(w.items.map(i => itemFrom(i.exId, i.sets.length))); },
   cancelWorkout: async () => { if (await ask('Training verwerfen? Eingaben gehen verloren.')) { S.active = null; ui.rest = null; save(); render(); } },
   finishWorkout: finish,
@@ -608,14 +643,14 @@ const ACT = {
   addBody: () => { const v = num($('#bodyIn').value); if (v < 20 || v > 400) return toast('Bitte gültiges Gewicht eingeben'); S.body.push({ id: uid(), date: Date.now(), kg: v }); save(); render(); toast('Gewicht gespeichert'); },
   newPlan: () => { ui.editPlan = { id: uid(), name: '', items: [] }; render(); },
   editPlan: d => { ui.editPlan = JSON.parse(JSON.stringify(S.plans.find(p => p.id === d.id))); render(); },
-  cancelPlan: () => { ui.editPlan = null; render(); },
+  cancelPlan: () => { if (ui.planReturn) { ui.planReturn = false; ui.view = 'home'; } ui.editPlan = null; render(); },
   planMove: d => { const i = +d.i, a = ui.editPlan.items; if (i > 0) { [a[i - 1], a[i]] = [a[i], a[i - 1]]; render(); } },
   planRemove: d => { ui.editPlan.items.splice(d.i, 1); render(); },
   savePlan: () => {
     const p = ui.editPlan; if (!p.name.trim()) return toast('Bitte einen Namen eingeben');
     if (!p.items.length) return toast('Füge mindestens eine Übung hinzu');
     const i = S.plans.findIndex(x => x.id === p.id); if (i >= 0) S.plans[i] = p; else S.plans.push(p);
-    ui.editPlan = null; save(); render(); toast('Plan gespeichert');
+    ui.editPlan = null; if (ui.planReturn) { ui.planReturn = false; ui.view = 'home'; } save(); render(); toast('Plan gespeichert');
   },
   deletePlan: async () => { if (await ask('Plan löschen?')) { S.plans = S.plans.filter(p => p.id !== ui.editPlan.id); ui.editPlan = null; save(); render(); } },
   newExercise: () => { const q = ui.sheet && ui.sheet.q; ui.sheet = { type: 'newEx', q, back: ui.sheet && ui.sheet.target }; render(); },
