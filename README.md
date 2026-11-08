@@ -12,7 +12,8 @@ Kein Framework, kein Build-Schritt, keine Kosten.
 
 ## Funktionen
 - Training starten (frei, aus Plan oder als Wiederholung), Sätze mit kg × Wdh. abhaken, Cardio mit Minuten/km
-- „Letztes Mal“-Anzeige und vorausgefüllte Werte, Pausentimer mit Ton
+- „Letztes Mal“-Anzeige und vorausgefüllte Werte, −/+ Buttons (Schritt einstellbar), Fortschrittsleiste, Auto-Scroll zur nächsten Übung
+- Bildschirm bleibt während des Trainings an (abschaltbar), Pausentimer mit Ton (standardmäßig aus)
 - Trainingspläne anlegen und bearbeiten
 - Orte (Gyms) per GPS speichern und beim Start automatisch erkennen
 - Statistik: Trainings pro Woche, Kraftverlauf (geschätztes 1RM), Max-Gewicht, Volumen, Muskelgruppen, Orte, Körpergewicht

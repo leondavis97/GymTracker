@@ -55,7 +55,7 @@ const fresh = () => ({
   v: 1,
   exercises: DEFAULT_EX.map(([name, muscle, kind]) => ({ id: uid(), name, muscle, kind: kind || 'weight', machine: !kind && MACHINE_RX.test(name) })),
   workouts: [], locations: [], plans: [], body: [], active: null,
-  settings: { weeklyGoal: 3, rest: 0, autoLoc: true, r2: 1 }
+  settings: { weeklyGoal: 3, rest: 0, autoLoc: true, r2: 1, step: 2.5, wake: true }
 });
 let S = fresh();
 const ui = { view: 'home', sheet: null, histOpen: null, statEx: null, statMetric: 'e1rm', editPlan: null, rest: null };
@@ -150,9 +150,12 @@ function analyze() {
 }
 
 /* ========== Charts (SVG) ========== */
+// Datum fürs Diagramm, mit Jahr sobald der Zeitraum über ein Jahr hinausgeht oder nicht dieses Jahr ist
+const dLbl = (t, o) => { const y = new Date(t).getFullYear(), now = new Date().getFullYear();
+  return fmtDate(t, { day: 'numeric', month: 'short', ...(y !== new Date(o).getFullYear() || y !== now ? { year: '2-digit' } : {}) }); };
 function lineChart(pts, unit = '') {
   if (pts.length < 2) return `<div class="muted small" style="padding:12px 0">Mindestens 2 Einträge nötig für einen Verlauf.</div>`;
-  const W = 320, H = 150, L = 34, R = 8, T = 10, B = 22;
+  const W = 320, H = 160, L = 38, R = 8, T = 12, B = 24;
   const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
   let x0 = Math.min(...xs), x1 = Math.max(...xs); if (x1 === x0) x1 = x0 + 1;
   let y0 = Math.min(...ys), y1 = Math.max(...ys); const pad = (y1 - y0) * 0.15 || 5; y0 = Math.max(0, y0 - pad); y1 += pad;
@@ -161,15 +164,15 @@ function lineChart(pts, unit = '') {
   const area = d + ` L${X(x1).toFixed(1)} ${H - B} L${X(x0).toFixed(1)} ${H - B} Z`;
   const ticks = [y0, (y0 + y1) / 2, y1];
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img">
-    ${ticks.map(t => `<line class="grid" x1="${L}" x2="${W - R}" y1="${Y(t)}" y2="${Y(t)}"/><text x="${L - 4}" y="${Y(t) + 3}" text-anchor="end">${fmt(t, y1 - y0 < 10 ? 1 : 0)}</text>`).join('')}
+    ${ticks.map(t => `<line class="grid" x1="${L}" x2="${W - R}" y1="${Y(t)}" y2="${Y(t)}"/><text x="${L - 4}" y="${Y(t) + 4}" text-anchor="end">${fmt(t, y1 - y0 < 10 ? 1 : 0)}</text>`).join('')}
     <path class="ar" d="${area}"/><path class="ln" d="${d}"/>
     ${pts.length <= 40 ? pts.map(p => `<circle class="pt" r="3" cx="${X(p.x)}" cy="${Y(p.y)}"/>`).join('') : ''}
-    <text x="${L}" y="${H - 6}">${fmtDate(x0, { day: 'numeric', month: 'short' })}</text>
-    <text x="${W - R}" y="${H - 6}" text-anchor="end">${fmtDate(x1, { day: 'numeric', month: 'short' })}</text>
+    <text x="${L}" y="${H - 6}">${dLbl(x0, x1)}</text>
+    <text x="${W - R}" y="${H - 6}" text-anchor="end">${dLbl(x1, x0)}</text>
     <text x="${W - R}" y="${T - 1}" text-anchor="end">${esc(unit)}</text></svg>`;
 }
 function barChart(vals, labels, hi = -1) {
-  const W = 320, H = 130, B = 20, T = 8, n = vals.length, gw = W / n, max = Math.max(1, ...vals);
+  const W = 320, H = 140, B = 22, T = 12, n = vals.length, gw = W / n, max = Math.max(1, ...vals);
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img">${vals.map((v, i) => {
     const h = (H - B - T) * v / max, x = i * gw + gw * 0.18, y = H - B - h;
     return `<rect class="br ${v ? '' : 'dim'}" x="${x}" y="${v ? y : H - B - 3}" width="${gw * 0.64}" height="${v ? h : 3}" rx="4" ${i === hi ? '' : 'opacity=".75"'}/>`
@@ -189,11 +192,13 @@ function viewHome() {
     return `<div>${d}<i class="${on ? 'on' : ''} ${ds === dayStart(Date.now()) ? 'today' : ''}">${on ? '✓' : ''}</i></div>`;
   }).join('');
   const last = A.ws[A.ws.length - 1];
+  const nextPlan = S.plans.find(p => p.id === nextPlanId());
   const prs = A.ws.slice(-10).reverse().flatMap(w => A.per[w.id].prs.map(id => ({ id, w }))).slice(0, 4);
   return `
   <section class="card hero">
     <div class="row between"><div><div class="muted small">${greeting()} 👋</div><h1>Level ${L.level} · ${titleOf(L.level)}</h1></div>
-    <div class="streak">🔥<b>${A.streak}</b><span>${A.streak === 1 ? 'Woche' : 'Wochen'}</span></div></div>
+    ${A.streak ? `<div class="streak">🔥<b>${A.streak}</b><span>${A.streak === 1 ? 'Woche' : 'Wochen'}</span></div>`
+      : `<div class="streak">🎯<b>${Math.max(0, goal - A.thisWeek)}</b><span>bis zum Streak</span></div>`}</div>
     <div class="xpbar"><i style="width:${L.pct}%"></i></div>
     <div class="muted small">${fmt(L.into, 0)} / ${fmt(L.need, 0)} XP bis Level ${L.level + 1}</div>
   </section>
@@ -201,7 +206,9 @@ function viewHome() {
     <div class="row between"><h2>Diese Woche</h2><span class="${A.thisWeek >= goal ? 'badge good' : 'muted'}">${A.thisWeek}/${goal} Trainings${A.thisWeek >= goal ? ' ✓' : ''}</span></div>
     <div class="week">${days}</div>
   </section>
-  <button class="big primary" data-a="startChoice">Training starten</button>
+  ${nextPlan ? `<button class="big primary" data-a="startPlan" data-id="${nextPlan.id}" style="margin-bottom:4px">${esc(nextPlan.name)} starten</button>
+    <button class="link" style="display:block;margin:0 auto 4px" data-a="startChoice">Anderen Plan oder frei trainieren</button>`
+    : `<button class="big primary" data-a="startChoice">Training starten</button>`}
   <div class="section-title">Deine Pläne</div>
   ${S.plans.length ? `<div class="card stack">${planRows()}<button class="link" data-a="newPlanHome">+ Neuen Plan erstellen</button></div>`
     : `<button class="list-item" data-a="newPlanHome"><span><b>+ Plan erstellen</b><br><small>z. B. Tag A / Tag B, dann startest du mit einem Tipp</small></span><span>›</span></button>`}
@@ -211,46 +218,62 @@ function viewHome() {
 
 function viewWorkout() {
   const w = S.active;
+  const all = w.items.flatMap(it => it.sets), done = all.filter(x => x.done).length;
   const locs = S.locations.map(l => `<option value="${l.id}" ${l.id === w.locationId ? 'selected' : ''}>${esc(l.name)}</option>`).join('');
+  // Noch kein Ort: Gyms als Chips, zuletzt besuchte zuerst – ein Tipp genügt
+  const recent = [...S.locations].sort((a, b) => lastVisit(b.id) - lastVisit(a.id));
   return `
+  <section class="card wbar">
+    <div class="row between"><div><div class="muted small">${w.plan ? esc(w.plan) + ' · ' : ''}seit ${fmtTime(w.start)}</div>
+      <div class="row" style="gap:10px;align-items:baseline"><div class="timer" id="wtimer">${clock(Date.now() - w.start)}</div>${all.length ? `<span class="muted small"><b style="color:var(--text)">${done}</b>/${all.length} Sätze</span>` : ''}</div></div>
+    <button class="btn primary" data-a="finishWorkout">Beenden</button></div>
+    ${all.length ? `<div class="wprog"><i style="width:${done / all.length * 100}%"></i></div>` : ''}
+  </section>
   <section class="card">
-    <div class="row between"><div><div class="muted small">Training läuft · seit ${fmtTime(w.start)}</div><div class="timer" id="wtimer">${clock(Date.now() - w.start)}</div></div>
-    <button class="btn danger" data-a="cancelWorkout">Verwerfen</button></div>
-    <div class="row" style="margin-top:12px">
+    ${!w.locationId && recent.length ? `<div class="muted small" style="margin-bottom:8px">Wo trainierst du heute?</div>
+      <div class="chips">${recent.map(l => `<button class="chip" data-a="setLoc" data-id="${l.id}">📍 ${esc(l.name)}</button>`).join('')}<button class="chip" data-a="setLoc" data-id="__new">+ Neu</button>${S.locations.some(l => l.lat) ? `<button class="chip" data-a="detectLoc" aria-label="Ort per GPS erkennen">🛰️ GPS</button>` : ''}</div>`
+    : `<div class="row">
       <select data-c="loc" class="grow"><option value="">📍 Ort wählen…</option>${locs}<option value="__new">+ Neuer Ort…</option></select>
-      <button class="icon-btn" style="width:44px;height:44px" data-a="detectLoc" aria-label="Ort per GPS erkennen">🛰️</button>
-    </div>
+      <button class="icon-btn" data-a="detectLoc" aria-label="Ort per GPS erkennen">🛰️</button>
+    </div>`}
   </section>
   ${w.items.length ? w.items.map(itemCard).join('') : `<div class="card empty"><i>➕</i>Füge deine erste Übung hinzu.</div>`}
   <button class="big secondary" data-a="openPicker" data-target="workout">+ Übung hinzufügen</button>
   <textarea data-f="note" placeholder="Notiz zum Training (optional)">${esc(w.note || '')}</textarea>
-  <button class="big primary" data-a="finishWorkout">Training beenden 🏁</button>`;
+  <button class="big primary" data-a="finishWorkout">Training beenden 🏁</button>
+  <button class="link danger" style="display:block;margin:0 auto" data-a="cancelWorkout">Training verwerfen</button>`;
 }
+const lastVisit = locId => { const w = sorted().reverse().find(w => w.locationId === locId); return w ? w.start : 0; };
+// "180 × 6, 180 × 6, 180 × 6" → "3× 180 × 6"
+function setsStr(exId, sets) {
+  const parts = sets.map(x => setStr(exId, x));
+  return parts.every(x => x === parts[0]) && parts.length > 1 ? `${parts.length}× ${parts[0]}` : parts.join(', ');
+}
+const stepOf = (exId, f) => f === 'r' ? 1 : isCardio(exId) ? 0.5 : (S.settings.step || 2.5);
 
 function itemCard(it, i) {
   const ex = exById(it.exId), cardio = ex.kind === 'cardio', loc = S.active.locationId, prev = lastSets(it.exId, S.active.id, loc);
-  const otherGym = prev && ex.machine && prev.locId !== loc;
-  const prevLbl = !prev ? '' : otherGym ? `Letztes Mal${locById(prev.locId) ? ' (' + esc(locById(prev.locId).name) + ')' : ''}: ` : (ex.machine && loc ? 'Letztes Mal hier: ' : 'Letztes Mal: ');
+  const otherGym = prev && ex.machine && loc && prev.locId && prev.locId !== loc;
+  const prevGym = prev && ex.machine && prev.locId && prev.locId !== loc && locById(prev.locId) ? ` (${esc(locById(prev.locId).name)})` : '';
   const ph = (j, f) => { const p = it.sets[j - 1] || (prev && (prev.sets[j] || prev.sets[prev.sets.length - 1])); return p ? esc(p[f]) : ''; };
-  return `<section class="card ex">
-    <div class="row between"><div class="grow"><h3>${esc(ex.name)}</h3>
+  const meta = [it.target ? 'Ziel ' + esc(it.target) : '', prev ? `Letztes Mal${prevGym}: ${setsStr(it.exId, prev.sets)}` : (it.target ? '' : ex.muscle)].filter(Boolean).join(' · ');
+  const allDone = it.sets.length && it.sets.every(x => x.done);
+  const field = (j, s, f, mode) => `<div class="step"><button data-a="step" data-i="${i}" data-s="${j}" data-f="${f}" data-d="-1" aria-label="weniger">−</button><input inputmode="${mode}" data-f="${f}" data-i="${i}" data-s="${j}" value="${esc(s[f])}" placeholder="${ph(j, f)}"><button data-a="step" data-i="${i}" data-s="${j}" data-f="${f}" data-d="1" aria-label="mehr">+</button></div>`;
+  return `<section class="card ex ${allDone ? 'ex-done' : ''}" id="ex${i}">
+    <div class="row between" style="align-items:flex-start"><div class="grow"><h3>${allDone ? '✓ ' : ''}${esc(ex.name)}</h3>
       ${it.subFor ? `<div class="target">⇄ statt ${esc(exById(it.subFor).name)}</div>` : ''}
-      <div class="muted small">${prev ? prevLbl + prev.sets.map(s => setStr(it.exId, s)).join(', ') : ex.muscle}</div>
-      ${otherGym ? `<div class="target">Anderes Gym, Gewichte evtl. nicht vergleichbar</div>` : ''}
-      ${it.target ? `<div class="target">Ziel: ${esc(it.target)}</div>` : ''}</div>
-      <button class="icon-btn" data-a="swapItem" data-i="${i}" aria-label="Auf andere Übung ausweichen">⇄</button>
-      <button class="icon-btn" data-a="moveItem" data-i="${i}" aria-label="Nach oben">↑</button>
-      <button class="icon-btn" data-a="removeItem" data-i="${i}" aria-label="Übung entfernen">✕</button></div>
+      <div class="muted small">${meta}</div>
+      ${otherGym ? `<div class="target">Anderes Gym, Gewichte evtl. nicht vergleichbar</div>` : ''}</div>
+      <button class="icon-btn" data-a="itemMenu" data-i="${i}" aria-label="Optionen">⋯</button></div>
+    ${it.note !== undefined ? `<input class="inote" data-f="inote" data-i="${i}" value="${esc(it.note)}" placeholder="z. B. Hackenschmidt, Gerät belegt, Sitz Stufe 4">` : ''}
     <div class="sets">
-      <div class="set head"><span>Satz</span><span>${cardio ? 'km' : 'kg'}</span><span>${cardio ? 'Minuten' : 'Wdh.'}</span><span></span></div>
+      <div class="set head"><span></span><span>${cardio ? 'km' : 'kg'}</span><span>${cardio ? 'Minuten' : 'Wdh.'}</span><span></span></div>
       ${it.sets.map((s, j) => `<div class="set ${s.done ? 'done' : ''}">
-        <button class="setno" data-a="removeSet" data-i="${i}" data-s="${j}" aria-label="Satz löschen">${j + 1}</button>
-        <input inputmode="decimal" data-f="w" data-i="${i}" data-s="${j}" value="${esc(s.w)}" placeholder="${ph(j, 'w')}">
-        <input inputmode="numeric" data-f="r" data-i="${i}" data-s="${j}" value="${esc(s.r)}" placeholder="${ph(j, 'r')}">
+        <span class="setno">${j + 1}</span>
+        ${field(j, s, 'w', 'decimal')}${field(j, s, 'r', cardio ? 'decimal' : 'numeric')}
         <button class="check" data-a="toggleSet" data-i="${i}" data-s="${j}" aria-label="Satz abhaken">✓</button></div>`).join('')}
     </div>
-    <div class="row between"><button class="link" data-a="addSet" data-i="${i}">+ Satz</button>${it.note === undefined ? `<button class="link muted" style="color:var(--muted)" data-a="addNote" data-i="${i}">+ Gerät/Notiz</button>` : ''}</div>
-    ${it.note !== undefined ? `<input data-f="inote" data-i="${i}" value="${esc(it.note)}" placeholder="z. B. Hackenschmidt, Gerät belegt, Sitz Stufe 4">` : ''}
+    <div class="row between"><button class="link" data-a="addSet" data-i="${i}">+ Satz</button>${it.sets.length ? `<button class="link" style="color:var(--muted)" data-a="removeSet" data-i="${i}">− Satz</button>` : ''}</div>
   </section>`;
 }
 
@@ -323,7 +346,8 @@ function viewStats() {
     <div class="tile"><b>${A.count}</b><span>Trainings</span></div>
     <div class="tile"><b>${fmt(A.count / nWeeks, 1)}</b><span>Ø pro Woche</span></div>
     <div class="tile"><b>${fmtKg(A.totalVol)}</b><span>Gesamtvolumen</span></div>
-    <div class="tile"><b>${A.prCount}</b><span>Persönliche Rekorde</span></div>
+    ${A.prCount ? `<div class="tile"><b>${A.prCount}</b><span>Persönliche Rekorde</span></div>`
+      : `<div class="tile"><b>${A.ws.filter(w => w.start >= new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime()).length}</b><span>Trainings diesen Monat</span></div>`}
   </div>
   <section class="card"><div class="row between"><h2>Trainings</h2><div class="chips">${[['w', 'Wochen'], ['m', 'Monate']].map(([k, l]) => `<button class="chip ${(ui.freq || 'w') === k ? 'on' : ''}" data-a="freq" data-k="${k}">${l}</button>`).join('')}</div></div>
     <div class="muted small">${ui.freq === 'm' ? 'Letzte 12 Monate' : `Letzte 12 Wochen · Ziel ${S.settings.weeklyGoal}/Woche`}</div>${barChart(wv, wl, 11)}</section>
@@ -401,6 +425,10 @@ function viewMore() {
     <select data-c="weeklyGoal">${[1, 2, 3, 4, 5, 6, 7].map(n => `<option ${n === S.settings.weeklyGoal ? 'selected' : ''}>${n}</option>`).join('')}</select>
     <label class="field">Pausentimer nach jedem Satz</label>
     <select data-c="rest">${[0, 45, 60, 90, 120, 150, 180, 240].map(n => `<option value="${n}" ${n === S.settings.rest ? 'selected' : ''}>${n ? clock(n * 1000) + ' min' : 'Aus'}</option>`).join('')}</select>
+    <label class="field">Schritt für −/+ beim Gewicht</label>
+    <select data-c="step">${[1, 1.25, 2.5, 5].map(n => `<option value="${n}" ${n === (S.settings.step || 2.5) ? 'selected' : ''}>${fmt(n, 2)} kg</option>`).join('')}</select>
+    <label class="field">Bildschirm während des Trainings anlassen</label>
+    <select data-c="wake"><option value="1" ${S.settings.wake ? 'selected' : ''}>An</option><option value="0" ${S.settings.wake ? '' : 'selected'}>Aus</option></select>
     <label class="field">Ort beim Start automatisch per GPS erkennen</label>
     <select data-c="autoLoc"><option value="1" ${S.settings.autoLoc ? 'selected' : ''}>An</option><option value="0" ${S.settings.autoLoc ? '' : 'selected'}>Aus</option></select>
   </section>
@@ -446,6 +474,13 @@ function sheetHTML() {
   if (s.type === 'startChoice') return `<h2>Welcher Plan?</h2><div style="margin-top:12px">${planRows()}</div>
     <button class="list-item" data-a="startFree"><span><b>Ohne Plan</b><br><small>Übungen frei hinzufügen</small></span><span>›</span></button>
     <button class="link" data-a="newPlanHome">+ Neuen Plan erstellen</button>`;
+  if (s.type === 'itemMenu') { const it = S.active.items[s.idx], n = S.active.items.length;
+    return `<h2>${esc(exById(it.exId).name)}</h2><div style="margin-top:12px">
+    <button class="list-item" data-a="swapItem" data-i="${s.idx}"><span>⇄ Auf andere Übung ausweichen</span><span>›</span></button>
+    ${it.note === undefined ? `<button class="list-item" data-a="addNote" data-i="${s.idx}"><span>📝 Gerät / Notiz hinzufügen</span><span>›</span></button>` : ''}
+    ${s.idx > 0 ? `<button class="list-item" data-a="moveItem" data-i="${s.idx}" data-d="-1"><span>↑ Nach oben</span></button>` : ''}
+    ${s.idx < n - 1 ? `<button class="list-item" data-a="moveItem" data-i="${s.idx}" data-d="1"><span>↓ Nach unten</span></button>` : ''}
+    <button class="list-item danger" data-a="removeItem" data-i="${s.idx}"><span>✕ Aus dem Training entfernen</span></button></div>`; }
   if (s.type === 'time') return `<h2>Zeit ändern</h2>
     <label class="field" for="tDate">Datum</label><input id="tDate" type="date" value="${s.date}">
     <div class="row"><div class="grow"><label class="field" for="tTime">Startzeit</label><input id="tTime" type="time" value="${s.time}"></div>
@@ -489,7 +524,16 @@ function render() {
   if (keep) window.scrollTo(0, y); else window.scrollTo(0, 0);
   document.querySelectorAll('#nav button').forEach(b => { b.classList.toggle('on', b.dataset.view === ui.view); b.classList.toggle('live', b.dataset.view === 'home' && !!S.active); });
   $('#nav-home').textContent = S.active ? 'Training' : 'Heute';
-  renderSheet(); renderRest();
+  renderSheet(); renderRest(); syncWake();
+}
+/* Bildschirm an lassen, solange ein Training läuft (Screen Wake Lock, iOS 16.4+) */
+let wakeLock = null;
+async function syncWake() {
+  const want = !!(S.active && S.settings.wake && document.visibilityState === 'visible' && navigator.wakeLock);
+  try {
+    if (want && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); }
+    else if (!want && wakeLock) { const l = wakeLock; wakeLock = null; await l.release(); }
+  } catch { wakeLock = null; }
 }
 let toastT;
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2400); }
@@ -611,15 +655,21 @@ const ACT = {
     else S.active.items.push(itemFrom(d.id, isCardio(d.id) ? 1 : 3));
     save(); render(); setTimeout(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }), 50);
   },
+  itemMenu: d => { ui.sheet = { type: 'itemMenu', idx: +d.i }; render(); },
+  setLoc: d => { if (d.id === '__new') { ui.sheet = { type: 'loc', forWorkout: true }; render(); return; } S.active.locationId = d.id; refillForGym(); save(); render(); },
+  step: d => { const it = S.active.items[d.i], s = it.sets[d.s], f = d.f;
+    const base = s[f] !== '' && s[f] != null ? num(s[f]) : num((document.querySelector(`.set input[data-f="${f}"][data-i="${d.i}"][data-s="${d.s}"]`) || {}).placeholder);
+    s[f] = String(Math.max(0, Math.round((base + +d.d * stepOf(it.exId, f)) * 100) / 100)); save(); render(); },
   swapItem: d => { ui.sheet = { type: 'picker', target: 'swap', idx: +d.i, q: '' }; render(); },
-  addNote: d => { S.active.items[d.i].note = ''; render(); const el = document.querySelector(`[data-f=inote][data-i="${d.i}"]`); el && el.focus(); },
+  addNote: d => { ui.sheet = null; S.active.items[d.i].note = ''; render(); const el = document.querySelector(`[data-f=inote][data-i="${d.i}"]`); el && el.focus(); },
   toggleMachine: d => { const e = S.exercises.find(x => x.id === d.id); e.machine = !e.machine; save(); $('#pickList').innerHTML = pickList(ui.sheet.q || ''); },
   freq: d => { ui.freq = d.k; render(); },
   statLoc: d => { ui.statLoc = d.l === '*' ? null : d.l; render(); },
   addSet: d => { const it = S.active.items[d.i], l = it.sets[it.sets.length - 1]; it.sets.push({ w: l ? l.w : '', r: l ? l.r : '', done: false }); save(); render(); },
-  removeSet: async d => { const it = S.active.items[d.i]; if (await ask(`Satz ${+d.s + 1} löschen?`)) { it.sets.splice(d.s, 1); save(); render(); } },
-  removeItem: async d => { if (await ask('Übung aus dem Training entfernen?')) { S.active.items.splice(d.i, 1); save(); render(); } },
-  moveItem: d => { const i = +d.i; if (i > 0) { const a = S.active.items; [a[i - 1], a[i]] = [a[i], a[i - 1]]; save(); render(); } },
+  removeSet: async d => { const it = S.active.items[d.i], last = it.sets[it.sets.length - 1]; if (!last) return;
+    if (last.done && !await ask(`Abgehakten Satz ${it.sets.length} löschen?`)) return; it.sets.pop(); save(); render(); },
+  removeItem: async d => { ui.sheet = null; if (await ask('Übung aus dem Training entfernen?')) { S.active.items.splice(d.i, 1); save(); } render(); },
+  moveItem: d => { const i = +d.i, j = i + (+d.d || -1), a = S.active.items; ui.sheet = null; if (j >= 0 && j < a.length) { [a[j], a[i]] = [a[i], a[j]]; save(); } render(); },
   toggleSet: (d, el) => {
     const s = S.active.items[d.i].sets[d.s];
     if (!s.done) {
@@ -632,6 +682,13 @@ const ACT = {
       try { audioCtx ||= new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch {}
     } else s.done = false;
     save(); render();
+    // Übung fertig → zur nächsten offenen Übung scrollen
+    const items = S.active.items, i = +d.i;
+    if (s.done && items[i].sets.every(x => x.done)) {
+      const nx = items.findIndex((it, k) => k > i && it.sets.some(x => !x.done));
+      const el = nx >= 0 && document.getElementById('ex' + nx);
+      if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
+    }
   },
   restAdd: d => { ui.rest.end += +d.d * 1000; ui.rest.total = Math.max(ui.rest.total, ui.rest.end - Date.now()); renderRest(); },
   restSkip: () => { ui.rest = null; renderRest(); },
@@ -722,12 +779,14 @@ document.addEventListener('change', e => {
   else if (c === 'statEx') { ui.statEx = t.value; render(); }
   else if (c === 'weeklyGoal') { S.settings.weeklyGoal = +t.value; save(); }
   else if (c === 'rest') { S.settings.rest = +t.value; save(); }
+  else if (c === 'step') { S.settings.step = +t.value; save(); }
+  else if (c === 'wake') { S.settings.wake = t.value === '1'; save(); syncWake(); }
   else if (c === 'autoLoc') { S.settings.autoLoc = t.value === '1'; save(); }
 });
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.matches('.set input')) { e.preventDefault(); const ins = [...document.querySelectorAll('.set input')], i = ins.indexOf(e.target); (ins[i + 1] || e.target).focus(); }
 });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') idbPut(JSON.parse(JSON.stringify(S))); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') idbPut(JSON.parse(JSON.stringify(S))); else syncWake(); });
 
 /* ========== Start ========== */
 (async function init() {
