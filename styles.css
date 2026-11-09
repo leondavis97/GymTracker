@@ -110,7 +110,7 @@ label.field { display: block; font-size: 13px; color: var(--muted); font-weight:
 .list-item.danger { color: var(--bad); }
 
 #restbar {
-  position: fixed; left: 12px; right: 12px; bottom: calc(var(--safe-b) + 74px); max-width: 616px; margin: 0 auto;
+  position: fixed; left: 12px; right: 12px; bottom: calc(var(--safe-b) + 74px - var(--vv-gap, 0px)); max-width: 616px; margin: 0 auto;
   background: var(--text); color: var(--bg); border-radius: 16px; padding: 10px 12px; display: flex; align-items: center; gap: 10px; z-index: 20;
   box-shadow: 0 8px 30px rgba(0,0,0,.25);
 }
@@ -121,10 +121,12 @@ label.field { display: block; font-size: 13px; color: var(--muted); font-weight:
 
 /* Nav */
 #nav {
-  position: fixed; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(5, 1fr);
+  position: fixed; left: 0; right: 0; bottom: calc(-1 * var(--vv-gap, 0px)); display: grid; grid-template-columns: repeat(5, 1fr);
   padding: 6px 4px calc(var(--safe-b) + 6px); background: var(--nav); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   border-top: 1px solid var(--line); z-index: 30;
 }
+/* Sicherheitsnetz: Hintergrund unter der Leiste fortsetzen, damit nie eine Lücke sichtbar ist */
+#nav::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 120px; background: var(--nav); }
 #nav button { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 11px; font-weight: 600; color: var(--muted); padding: 4px 0; position: relative; }
 #nav svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 #nav circle { fill: currentColor; stroke: none; }
@@ -172,10 +174,11 @@ label.field { display: block; font-size: 13px; color: var(--muted); font-weight:
 .empty i { display: block; font-size: 40px; font-style: normal; margin-bottom: 8px; }
 
 #toast {
-  position: fixed; left: 50%; top: calc(var(--safe-t) + 12px); transform: translate(-50%, -150%); background: var(--text); color: var(--bg);
+  position: fixed; left: 50%; top: calc(var(--safe-t) + 12px); transform: translate(-50%, calc(-100% - var(--safe-t) - 20px)); background: var(--text); color: var(--bg);
   padding: 10px 16px; border-radius: 12px; font-weight: 600; font-size: 14px; z-index: 60; transition: transform .25s; max-width: calc(100% - 32px); text-align: center;
 }
-#toast.show { transform: translate(-50%, 0); }
+#toast:not(.show) { visibility: hidden; opacity: 0; pointer-events: none; transition: transform .25s, opacity .25s, visibility 0s .25s; }
+#toast.show { transform: translate(-50%, 0); opacity: 1; visibility: visible; }
 .celebrate { text-align: center; padding: 8px 0 4px; }
 .celebrate .em { font-size: 54px; }
 .celebrate .xp { font-size: 36px; font-weight: 800; color: var(--accent); }

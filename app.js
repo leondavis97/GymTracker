@@ -786,6 +786,34 @@ document.addEventListener('change', e => {
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.matches('.set input')) { e.preventDefault(); const ins = [...document.querySelectorAll('.set input')], i = ins.indexOf(e.target); (ins[i + 1] || e.target).focus(); }
 });
+// iOS-Homescreen-App: Nach Tastatur, App-Wechsel oder Systemdialogen meldet iOS manchmal eine zu kleine
+// Fensterhöhe (meist um die Statusleiste). Dann rutscht die untere Leiste nach oben. Wir messen die Lücke
+// zum echten Bildschirmrand und gleichen sie über --vv-gap aus.
+const isStandalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+function isTyping() { const a = document.activeElement; return !!a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); }
+function fixViewport() {
+  let gap = 0;
+  if (isStandalone && !isTyping()) {
+    const portrait = matchMedia('(orientation: portrait)').matches;
+    const sh = portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
+    gap = Math.round(sh - window.innerHeight);
+    if (gap < 0 || gap > 80) gap = 0;
+  }
+  document.documentElement.style.setProperty('--vv-gap', gap + 'px');
+}
+function settleViewport() {
+  setTimeout(() => { if (!isTyping()) window.scrollTo(window.scrollX, window.scrollY); fixViewport(); }, 120);
+  setTimeout(fixViewport, 500);
+}
+if (isStandalone) {
+  fixViewport();
+  window.addEventListener('resize', fixViewport);
+  window.visualViewport?.addEventListener('resize', fixViewport);
+  window.addEventListener('orientationchange', settleViewport);
+  window.addEventListener('pageshow', settleViewport);
+  document.addEventListener('focusout', settleViewport);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') settleViewport(); });
+}
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') idbPut(JSON.parse(JSON.stringify(S))); else syncWake(); });
 
 /* ========== Start ========== */
