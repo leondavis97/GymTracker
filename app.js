@@ -15,6 +15,10 @@ const fmtDate = (ts, o = { weekday: 'short', day: 'numeric', month: 'short' }) =
 const fmtTime = ts => new Date(ts).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
 const fmtDur = ms => { const m = Math.max(1, Math.round(ms / 6e4)); return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`; };
 const clock = ms => { const s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); };
+const pad2 = n => String(n).padStart(2, '0');
+const dateVal = ts => { const d = new Date(ts); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
+const timeVal = ts => { const d = new Date(ts); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+const fromInputs = (date, time) => { const [y, m, dd] = date.split('-').map(Number), [hh, mi] = (time || '18:00').split(':').map(Number); return new Date(y, m - 1, dd, hh, mi).getTime(); };
 const fmtKg = n => n >= 10000 ? fmt(n / 1000, 1) + ' t' : fmt(n, 0) + ' kg';
 const dist = (a, b) => { const R = 6371e3, r = x => x * Math.PI / 180, dLa = r(b.lat - a.lat), dLo = r(b.lng - a.lng);
   const h = Math.sin(dLa / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(dLo / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
@@ -209,6 +213,7 @@ function viewHome() {
   ${nextPlan ? `<button class="big primary" data-a="startPlan" data-id="${nextPlan.id}" style="margin-bottom:4px">${esc(nextPlan.name)} starten</button>
     <button class="link" style="display:block;margin:0 auto 4px" data-a="startChoice">Anderen Plan oder frei trainieren</button>`
     : `<button class="big primary" data-a="startChoice">Training starten</button>`}
+  <button class="link" style="display:block;margin:0 auto 4px" data-a="backfill">+ Vergessenes Training nachtragen</button>
   <div class="section-title">Deine Pläne</div>
   ${S.plans.length ? `<div class="card stack">${planRows()}<button class="link" data-a="newPlanHome">+ Neuen Plan erstellen</button></div>`
     : `<button class="list-item" data-a="newPlanHome"><span><b>+ Plan erstellen</b><br><small>z. B. Tag A / Tag B, dann startest du mit einem Tipp</small></span><span>›</span></button>`}
@@ -217,17 +222,19 @@ function viewHome() {
 }
 
 function viewWorkout() {
-  const w = S.active;
-  const all = w.items.flatMap(it => it.sets), done = all.filter(x => x.done).length;
+  const w = S.active, live = w.items.filter(it => !it.skipped);
+  const all = live.flatMap(it => it.sets), done = all.filter(x => x.done).length;
+  const long = !w.past && Date.now() - w.start > 2.5 * 3600e3;
   const locs = S.locations.map(l => `<option value="${l.id}" ${l.id === w.locationId ? 'selected' : ''}>${esc(l.name)}</option>`).join('');
   // Noch kein Ort: Gyms als Chips, zuletzt besuchte zuerst – ein Tipp genügt
   const recent = [...S.locations].sort((a, b) => lastVisit(b.id) - lastVisit(a.id));
   return `
   <section class="card wbar">
-    <div class="row between"><div><div class="muted small">${w.plan ? esc(w.plan) + ' · ' : ''}seit ${fmtTime(w.start)}</div>
-      <div class="row" style="gap:10px;align-items:baseline"><div class="timer" id="wtimer">${clock(Date.now() - w.start)}</div>${all.length ? `<span class="muted small"><b style="color:var(--text)">${done}</b>/${all.length} Sätze</span>` : ''}</div></div>
-    <button class="btn primary" data-a="finishWorkout">Beenden</button></div>
+    <div class="row between"><div><div class="muted small">${w.plan ? esc(w.plan) + ' · ' : ''}${w.past ? 'Nachtrag' : 'seit ' + fmtTime(w.start)}</div>
+      <div class="row" style="gap:10px;align-items:baseline">${w.past ? `<button style="font-size:17px;font-weight:700;text-align:left" data-a="backfillEdit">${fmtDate(w.start, { weekday: 'short', day: 'numeric', month: 'numeric' })} · ${fmtTime(w.start)}–${fmtTime(w.end)} ✎</button>` : `<div class="timer" id="wtimer">${clock(Date.now() - w.start)}</div>`}${all.length ? `<span class="muted small"><b style="color:var(--text)">${done}</b>/${all.length} Sätze</span>` : ''}</div></div>
+    <button class="btn primary" data-a="finishWorkout">${w.past ? 'Speichern' : 'Beenden'}</button></div>
     ${all.length ? `<div class="wprog"><i style="width:${done / all.length * 100}%"></i></div>` : ''}
+    ${long ? `<div class="target" style="margin-top:8px">Läuft schon ${fmtDur(Date.now() - w.start)}. Vergessen zu beenden? <button class="link" data-a="endAt">Mit früherer Endzeit beenden</button></div>` : ''}
   </section>
   <section class="card">
     ${!w.locationId && recent.length ? `<div class="muted small" style="margin-bottom:8px">Wo trainierst du heute?</div>
@@ -240,8 +247,9 @@ function viewWorkout() {
   ${w.items.length ? w.items.map(itemCard).join('') : `<div class="card empty"><i>➕</i>Füge deine erste Übung hinzu.</div>`}
   <button class="big secondary" data-a="openPicker" data-target="workout">+ Übung hinzufügen</button>
   <textarea data-f="note" placeholder="Notiz zum Training (optional)">${esc(w.note || '')}</textarea>
-  <button class="big primary" data-a="finishWorkout">Training beenden 🏁</button>
-  <button class="link danger" style="display:block;margin:0 auto" data-a="cancelWorkout">Training verwerfen</button>`;
+  <button class="big primary" data-a="finishWorkout">${w.past ? 'Nachtrag speichern ✓' : 'Training beenden 🏁'}</button>
+  ${w.past ? '' : `<button class="link" style="display:block;margin:0 auto" data-a="endAt">Vergessen zu beenden? Endzeit wählen</button>`}
+  <button class="link danger" style="display:block;margin:0 auto" data-a="cancelWorkout">${w.past ? 'Nachtrag verwerfen' : 'Training verwerfen'}</button>`;
 }
 const lastVisit = locId => { const w = sorted().reverse().find(w => w.locationId === locId); return w ? w.start : 0; };
 // "180 × 6, 180 × 6, 180 × 6" → "3× 180 × 6"
@@ -252,6 +260,8 @@ function setsStr(exId, sets) {
 const stepOf = (exId, f) => f === 'r' ? 1 : isCardio(exId) ? 0.5 : (S.settings.step || 2.5);
 
 function itemCard(it, i) {
+  if (it.skipped) return `<section class="card ex ex-skip" id="ex${i}"><div class="row between"><div class="grow"><h3>⏭ ${esc(exById(it.exId).name)}</h3><div class="muted small">Übersprungen${it.sets.some(x => x.done) ? ', abgehakte Sätze bleiben gespeichert' : ''}</div></div>
+    <button class="btn" data-a="skipItem" data-i="${i}">Rückgängig</button></div></section>`;
   const ex = exById(it.exId), cardio = ex.kind === 'cardio', loc = S.active.locationId, prev = lastSets(it.exId, S.active.id, loc);
   const otherGym = prev && ex.machine && loc && prev.locId && prev.locId !== loc;
   const prevGym = prev && ex.machine && prev.locId && prev.locId !== loc && locById(prev.locId) ? ` (${esc(locById(prev.locId).name)})` : '';
@@ -264,7 +274,8 @@ function itemCard(it, i) {
       ${it.subFor ? `<div class="target">⇄ statt ${esc(exById(it.subFor).name)}</div>` : ''}
       <div class="muted small">${meta}</div>
       ${otherGym ? `<div class="target">Anderes Gym, Gewichte evtl. nicht vergleichbar</div>` : ''}</div>
-      <button class="icon-btn" data-a="itemMenu" data-i="${i}" aria-label="Optionen">⋯</button></div>
+      <button class="chip" style="margin-right:6px;align-self:center" data-a="skipItem" data-i="${i}" aria-label="Übung überspringen">Skip ⏭</button><button class="icon-btn" data-a="itemMenu" data-i="${i}" aria-label="Optionen">⋯</button></div>
+    ${it.alts && it.alts.length > 1 ? `<div class="chips" style="margin-top:8px">${it.alts.map(id => `<button class="chip ${id === it.exId ? 'on' : ''}" data-a="pickVariant" data-i="${i}" data-id="${id}">${esc(exById(id).name)}</button>`).join('')}</div>` : ''}
     ${it.note !== undefined ? `<input class="inote" data-f="inote" data-i="${i}" value="${esc(it.note)}" placeholder="z. B. Hackenschmidt, Gerät belegt, Sitz Stufe 4">` : ''}
     <div class="sets">
       <div class="set head"><span></span><span>${cardio ? 'km' : 'kg'}</span><span>${cardio ? 'Minuten' : 'Wdh.'}</span><span></span></div>
@@ -286,15 +297,16 @@ function histCard(w, A) {
       <div class="muted small">${w.items.length ? `${w.items.length} Übungen · ${p.sets} Sätze · ${fmtKg(p.vol)} · ` : (w.plan ? esc(w.plan) + ' · ' : '')}+${p.xp || 0} XP</div>
     </button>
     ${open ? `<div class="hist-sets">${w.items.map(it => `<div><b>${p.prs.includes(it.exId) ? '⭐ ' : ''}${esc(exById(it.exId).name)}</b>${it.subFor ? ` <span class="muted small">⇄ statt ${esc(exById(it.subFor).name)}</span>` : ''}<br><span class="muted">${it.sets.map(s => setStr(it.exId, s)).join(' · ')}</span>${it.note ? `<br><span class="muted small">📝 ${esc(it.note)}</span>` : ''}</div>`).join('')}
+      ${w.skipped && w.skipped.length ? `<div class="muted small">⏭ Übersprungen: ${w.skipped.map(id => esc(exById(id).name)).join(', ')}</div>` : ''}
       ${w.note ? `<div class="muted">📝 ${esc(w.note)}</div>` : ''}</div>
-      <div class="row" style="margin-top:10px"><button class="btn" data-a="repeatWorkout" data-id="${w.id}">Wiederholen</button><button class="btn" data-a="editTime" data-id="${w.id}">Zeit ändern</button><span class="grow"></span><button class="btn danger" data-a="deleteWorkout" data-id="${w.id}">Löschen</button></div>` : ''}
+      <div class="row wrap" style="margin-top:10px">${canResume(w) ? `<button class="btn primary" data-a="resumeWorkout" data-id="${w.id}">Fortsetzen</button>` : ''}<button class="btn" data-a="repeatWorkout" data-id="${w.id}">Wiederholen</button><button class="btn" data-a="editTime" data-id="${w.id}">Zeit ändern</button><span class="grow"></span><button class="btn danger" data-a="deleteWorkout" data-id="${w.id}">Löschen</button></div>` : ''}
   </section>`;
 }
 
 function viewHistory() {
   const A = analyze(), ws = [...A.ws].reverse();
-  if (!ws.length) return `<div class="page-title">Verlauf</div><div class="card empty"><i>📅</i>Hier erscheinen deine Trainings.</div>`;
-  let out = '<div class="page-title">Verlauf</div>', m = '';
+  if (!ws.length) return `<div class="page-title">Verlauf</div><div class="card empty"><i>📅</i>Hier erscheinen deine Trainings.</div><button class="big secondary" data-a="backfill">+ Vergessenes Training nachtragen</button>`;
+  let out = '<div class="page-title">Verlauf</div><button class="big secondary" data-a="backfill">+ Vergessenes Training nachtragen</button>', m = '';
   for (const w of ws) {
     const mm = fmtDate(w.start, { month: 'long', year: 'numeric' });
     if (mm !== m) { m = mm; out += `<div class="section-title">${mm}</div>`; }
@@ -388,7 +400,7 @@ function viewPlans() {
   return `<div class="page-title">Trainingspläne</div>
   ${S.plans.length ? S.plans.map(p => `<section class="card">
     <div class="row between"><h3>${esc(p.name)}</h3><span class="muted small">${p.items.length} Übungen</span></div>
-    <div class="muted small" style="margin-top:4px">${p.items.map(i => `${esc(exById(i.exId).name)} ${i.sets}×${esc(i.reps)}`).join(' · ')}</div>
+    <div class="muted small" style="margin-top:4px">${p.items.map(i => `${esc(exById(i.exId).name)}${i.alts && i.alts.length ? ` <i>(oder ${i.alts.map(a => esc(exById(a).name)).join(', ')})</i>` : ''} ${i.sets}×${esc(i.reps)}`).join(' · ')}</div>
     <div class="row" style="margin-top:12px"><button class="btn primary" data-a="startPlan" data-id="${p.id}">Starten</button><button class="btn" data-a="editPlan" data-id="${p.id}">Bearbeiten</button></div>
   </section>`).join('') : `<div class="card empty"><i>📋</i>Lege Pläne an, z. B. „Push“, „Pull“, „Beine“ oder „Ganzkörper A“.</div>`}
   <button class="big primary" data-a="newPlan">+ Neuer Plan</button>`;
@@ -401,7 +413,8 @@ function viewPlanEdit() {
   ${p.items.map((it, i) => `<section class="card"><div class="row between"><h3 class="grow">${esc(exById(it.exId).name)}</h3>
       <button class="icon-btn" data-a="planMove" data-i="${i}">↑</button><button class="icon-btn" data-a="planRemove" data-i="${i}">✕</button></div>
     <div class="row" style="margin-top:10px"><div class="grow"><label class="field">Sätze</label><input inputmode="numeric" data-p="sets" data-i="${i}" value="${esc(it.sets)}"></div>
-    <div class="grow"><label class="field">${isCardio(it.exId) ? 'Minuten' : 'Wdh. (z. B. 8–12)'}</label><input data-p="reps" data-i="${i}" value="${esc(it.reps)}"></div></div></section>`).join('')}
+    <div class="grow"><label class="field">${isCardio(it.exId) ? 'Minuten' : 'Wdh. (z. B. 8–12)'}</label><input data-p="reps" data-i="${i}" value="${esc(it.reps)}"></div></div>
+    <div class="chips" style="margin-top:10px;align-items:center">${(it.alts || []).map((a, k) => `<button class="chip" data-a="planAltRemove" data-i="${i}" data-k="${k}">oder ${esc(exById(a).name)} ✕</button>`).join('')}<button class="link small" data-a="openPicker" data-target="planAlt" data-i="${i}">+ Variante</button></div></section>`).join('')}
   <button class="big secondary" data-a="openPicker" data-target="plan">+ Übung hinzufügen</button>
   <button class="big primary" data-a="savePlan">Plan speichern</button>`;
 }
@@ -452,7 +465,8 @@ function ask(msg, ok = 'Ja') { return new Promise(res => { ui.sheet = { type: 'c
 function answer(v) { const s = ui.sheet; if (!s || s.type !== 'confirm') return; ui.sheet = s.prev || null; render(); s.res(v); }
 function sheetHTML() {
   const s = ui.sheet; if (!s) return '';
-  if (s.type === 'picker') return `<h2>${s.target === 'manage' ? 'Übungen verwalten' : s.target === 'swap' ? 'Ausweichen auf…' : 'Übung wählen'}</h2>
+  if (s.type === 'picker') return `<h2>${s.target === 'manage' ? 'Übungen verwalten' : s.target === 'swap' ? 'Ausweichen auf…' : s.target === 'planAlt' ? 'Variante wählen' : 'Übung wählen'}</h2>
+    ${s.target === 'planAlt' ? `<div class="muted small">Alternative zu ${esc(exById(ui.editPlan.items[s.idx].exId).name)}. Im Training wechselst du dann mit einem Tipp.</div>` : ''}
     ${s.target === 'swap' ? `<div class="muted small">Die Sätze zählen für die neue Übung, im Verlauf steht „statt ${esc(exById(S.active.items[s.idx].subFor || S.active.items[s.idx].exId).name)}“.</div>` : ''}
     ${s.target === 'manage' ? '<div class="muted small">„Gerät“: Gewichte werden nur innerhalb desselben Gyms verglichen. „Frei“: überall vergleichbar (Hanteln, Körpergewicht).</div>' : ''}
     <input id="pickQ" placeholder="Suchen…" style="margin:12px 0" autocomplete="off" value="${esc(s.q || '')}">
@@ -481,17 +495,29 @@ function sheetHTML() {
     ${s.idx > 0 ? `<button class="list-item" data-a="moveItem" data-i="${s.idx}" data-d="-1"><span>↑ Nach oben</span></button>` : ''}
     ${s.idx < n - 1 ? `<button class="list-item" data-a="moveItem" data-i="${s.idx}" data-d="1"><span>↓ Nach unten</span></button>` : ''}
     <button class="list-item danger" data-a="removeItem" data-i="${s.idx}"><span>✕ Aus dem Training entfernen</span></button></div>`; }
+  if (s.type === 'backfill') return `<h2>${s.edit ? 'Datum & Zeit' : 'Training nachtragen'}</h2>
+    ${s.edit ? '' : '<div class="muted small">Für ein Training, das du vergessen hast einzutragen. Danach trägst du Übungen und Sätze wie gewohnt ein.</div>'}
+    <label class="field" for="bDate">Datum</label><input id="bDate" type="date" value="${s.date}" max="${dateVal(Date.now())}">
+    <div class="row"><div class="grow"><label class="field" for="bTime">Startzeit</label><input id="bTime" type="time" value="${s.time}"></div>
+    <div class="grow"><label class="field" for="bDur">Dauer (Minuten)</label><input id="bDur" inputmode="numeric" value="${s.dur}"></div></div>
+    ${s.edit ? '' : `<label class="field" for="bPlan">Plan</label><select id="bPlan"><option value="">Ohne Plan</option>${S.plans.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>`}
+    <button class="big primary" data-a="${s.edit ? 'backfillSave' : 'backfillGo'}">${s.edit ? 'Übernehmen' : 'Weiter zu den Übungen'}</button>`;
+  if (s.type === 'endAt') return `<h2>Training beenden um…</h2>
+    <div class="muted small">Gestartet ${fmtDate(S.active.start)} um ${fmtTime(S.active.start)}.${s.hint ? ' Vorschlag: kurz nach deinem letzten abgehakten Satz.' : ''}</div>
+    <div class="row"><div class="grow"><label class="field" for="eDate">Datum</label><input id="eDate" type="date" value="${s.date}"></div>
+    <div class="grow"><label class="field" for="eTime">Endzeit</label><input id="eTime" type="time" value="${s.time}"></div></div>
+    <button class="big primary" data-a="endAtSave">Mit dieser Endzeit beenden</button>`;
   if (s.type === 'time') return `<h2>Zeit ändern</h2>
     <label class="field" for="tDate">Datum</label><input id="tDate" type="date" value="${s.date}">
     <div class="row"><div class="grow"><label class="field" for="tTime">Startzeit</label><input id="tTime" type="time" value="${s.time}"></div>
     <div class="grow"><label class="field" for="tDur">Dauer (Minuten)</label><input id="tDur" inputmode="numeric" value="${s.dur}" placeholder="z. B. 75"></div></div>
     <button class="big primary" data-a="saveTime">Speichern</button>`;
   if (s.type === 'summary') return `<div class="celebrate"><div class="em">${s.levelUp ? '🎉' : '💪'}</div>
-    <h2>${s.levelUp ? `Level up! Jetzt Level ${s.level}` : 'Training gespeichert'}</h2>
+    <h2>${s.levelUp ? `Level up! Jetzt Level ${s.level}` : s.past ? 'Training nachgetragen' : 'Training gespeichert'}</h2>
     <div class="xp">+${s.xp} XP</div>
     <div class="muted">${s.sets} Sätze · ${fmtKg(s.vol)} · ${fmtDur(s.dur)}</div>
     ${s.dur > 3 * 3600e3 ? `<div class="target" style="margin-top:6px">Ganz schön lang. Vergessen zu beenden?</div>` : ''}
-    <button class="link" data-a="editTime" data-id="${s.wid}">Zeit korrigieren</button></div>
+    <div class="row" style="justify-content:center;gap:18px"><button class="link" data-a="editTime" data-id="${s.wid}">Zeit korrigieren</button>${s.past ? '' : `<button class="link" data-a="resumeWorkout" data-id="${s.wid}">Doch weiter trainieren</button>`}</div></div>
     ${s.prs.length ? `<div class="section-title">Neue Rekorde</div><div class="card stack">${s.prs.map(id => `<div>⭐ ${esc(exById(id).name)}</div>`).join('')}</div>` : ''}
     ${s.ach.length ? `<div class="section-title">Neue Erfolge</div><div class="ach">${s.ach.map(id => { const a = ACH.find(x => x[0] === id); return `<div><i>${a[1]}</i>${a[2]}</div>`; }).join('')}</div>` : ''}
     <button class="big primary" data-a="closeSheet">Weiter</button>`;
@@ -529,7 +555,7 @@ function render() {
 /* Bildschirm an lassen, solange ein Training läuft (Screen Wake Lock, iOS 16.4+) */
 let wakeLock = null;
 async function syncWake() {
-  const want = !!(S.active && S.settings.wake && document.visibilityState === 'visible' && navigator.wakeLock);
+  const want = !!(S.active && !S.active.past && S.settings.wake && document.visibilityState === 'visible' && navigator.wakeLock);
   try {
     if (want && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); }
     else if (!want && wakeLock) { const l = wakeLock; wakeLock = null; await l.release(); }
@@ -589,7 +615,22 @@ function planRows() {
 }
 
 /* ========== Aktionen ========== */
+// Plan → Trainingsübungen; Varianten (alts) bleiben als Auswahl am Item
+function planItems(p) {
+  return p.items.map(i => { const reps = String(i.reps || ''), it = itemFrom(i.exId, Math.max(1, num(i.sets) || 3), reps);
+    if (i.alts && i.alts.length) { it.alts = [i.exId, ...i.alts.filter(a => a !== i.exId)]; it.reps = reps; }
+    return it; });
+}
+function readBackfill() {
+  const date = $('#bDate').value, time = $('#bTime').value, dur = Math.round(num($('#bDur').value));
+  if (!date) { toast('Bitte ein Datum wählen'); return null; }
+  if (dur < 1 || dur > 600) { toast('Dauer bitte in Minuten (1–600)'); return null; }
+  const start = fromInputs(date, time);
+  if (start > Date.now()) { toast('Das Datum liegt in der Zukunft'); return null; }
+  return { start, end: start + dur * 6e4 };
+}
 function newWorkout(items, plan) {
+  S.undo = null;
   S.active = { id: uid(), start: Date.now(), end: null, locationId: '', note: '', items, ...(plan ? { planId: plan.id, plan: plan.name } : {}) };
   ui.view = 'home'; save(); render();
   if (S.settings.autoLoc && S.locations.some(l => l.lat)) detectLoc(true);
@@ -608,15 +649,21 @@ function refillForGym() {
     it.sets.forEach((s, j) => { if (!s.done) { const p = prev.sets[j] || prev.sets[prev.sets.length - 1]; s.w = p.w; } });
   }
 }
-async function finish() {
-  const w = S.active;
+const canResume = w => !S.active && !w.added && w.end && Date.now() - w.end < 12 * 3600e3 && sorted().pop() === w;
+async function finish(endTs) {
+  const w = S.active, snap = JSON.parse(JSON.stringify(w));
+  const skipped = w.items.filter(it => it.skipped && !it.sets.some(s => s.done)).map(it => it.exId);
+  if (skipped.length) w.skipped = skipped; else delete w.skipped;
   w.items = w.items.map(it => ({ exId: it.exId, ...(it.subFor ? { subFor: it.subFor } : {}), ...(it.note ? { note: it.note.trim() } : {}), sets: it.sets.filter(s => s.done).map(s => ({ w: num(s.w), r: num(s.r), done: true })) })).filter(it => it.sets.length);
-  if (!w.items.length) { if (!await ask('Keine abgehakten Sätze. Training verwerfen?')) return; S.active = null; ui.rest = null; save(); render(); return; }
-  w.end = Date.now();
+  if (!w.items.length) { if (!await ask(w.past ? 'Keine abgehakten Sätze. Nachtrag verwerfen?' : 'Keine abgehakten Sätze. Training verwerfen?')) { S.active = snap; render(); return; } S.active = null; ui.rest = null; save(); render(); return; }
+  const past = !!w.past;
+  if (!past) w.end = endTs || Date.now();
+  delete w.past; if (past) w.added = true;
   const before = analyze();
   S.workouts.push(w); S.active = null; ui.rest = null;
+  S.undo = { wid: w.id, active: snap };
   const after = analyze(), p = after.per[w.id];
-  ui.sheet = { type: 'summary', wid: w.id, xp: after.xp - before.xp, sets: p.sets, vol: p.vol, dur: w.end - w.start, prs: p.prs,
+  ui.sheet = { type: 'summary', past, wid: w.id, xp: after.xp - before.xp, sets: p.sets, vol: p.vol, dur: w.end - w.start, prs: p.prs,
     ach: after.achieved.filter(a => !before.achieved.includes(a)), levelUp: after.level.level > before.level.level, level: after.level.level };
   save(); render();
 }
@@ -624,9 +671,55 @@ async function finish() {
 const ACT = {
   go: d => { ui.view = d.view; ui.planReturn = false; ui.editPlan = d.view === 'plans' ? ui.editPlan : null; render(); },
   startFree: () => { ui.sheet = null; newWorkout([]); },
-  startPlan: async d => { const p = S.plans.find(x => x.id === d.id); if (!p) return; if (S.active && !await ask('Es läuft bereits ein Training. Ersetzen?')) return; ui.sheet = null; newWorkout(p.items.map(i => itemFrom(i.exId, Math.max(1, num(i.sets) || 3), String(i.reps || ''))), p); },
+  startPlan: async d => { const p = S.plans.find(x => x.id === d.id); if (!p) return; if (S.active && !await ask('Es läuft bereits ein Training. Ersetzen?')) return; ui.sheet = null; newWorkout(planItems(p), p); },
   startChoice: () => { if (!S.plans.length) return newWorkout([]); ui.sheet = { type: 'startChoice' }; render(); },
   newPlanHome: () => { ui.sheet = null; ui.planReturn = true; ui.view = 'plans'; ui.editPlan = { id: uid(), name: '', items: [] }; render(); },
+  backfill: () => {
+    if (S.active) return toast(S.active.past ? 'Speichere zuerst den laufenden Nachtrag' : 'Es läuft gerade ein Training. Beende es zuerst.');
+    ui.sheet = { type: 'backfill', date: dateVal(Date.now() - DAY), time: '18:00', dur: 75 }; render(); },
+  backfillEdit: () => { const w = S.active; ui.sheet = { type: 'backfill', edit: true, date: dateVal(w.start), time: timeVal(w.start), dur: Math.round((w.end - w.start) / 6e4) }; render(); },
+  backfillGo: () => {
+    if (S.active) return toast('Es läuft gerade ein Training. Beende es zuerst.');
+    const r = readBackfill(); if (!r) return;
+    const plan = S.plans.find(p => p.id === $('#bPlan').value);
+    ui.sheet = null;
+    S.active = { id: uid(), start: r.start, end: r.end, past: true, locationId: '', note: '', items: plan ? planItems(plan) : [], ...(plan ? { planId: plan.id, plan: plan.name } : {}) };
+    ui.view = 'home'; save(); render();
+  },
+  backfillSave: () => { const r = readBackfill(); if (!r) return; S.active.start = r.start; S.active.end = r.end; ui.sheet = null; save(); render(); },
+  endAt: () => {
+    const w = S.active, ts = w.items.flatMap(it => it.sets.map(s => s.t || 0)), lastT = Math.max(0, ...ts);
+    const sug = Math.min(Date.now(), lastT ? lastT + 3 * 6e4 : w.start + 75 * 6e4);
+    ui.sheet = { type: 'endAt', date: dateVal(sug), time: timeVal(sug), hint: !!lastT }; render(); },
+  endAtSave: () => {
+    const d = $('#eDate').value, t = $('#eTime').value; if (!d || !t) return toast('Bitte Datum und Uhrzeit wählen');
+    const end = fromInputs(d, t);
+    if (end <= S.active.start) return toast('Endzeit muss nach dem Start liegen');
+    if (end > Date.now() + 6e4) return toast('Endzeit liegt in der Zukunft');
+    ui.sheet = null; finish(end);
+  },
+  resumeWorkout: async d => {
+    const w = S.workouts.find(x => x.id === d.id); if (!w) return;
+    if (S.active) return toast('Es läuft bereits ein Training');
+    const snap = S.undo && S.undo.wid === w.id ? S.undo.active : null;
+    const a = snap ? { ...snap, start: w.start, locationId: w.locationId, note: w.note || '' } : { ...JSON.parse(JSON.stringify(w)), end: null };
+    a.end = null; delete a.past; delete a.skipped;
+    if (!snap) a.items.forEach(it => it.sets.forEach(s => { s.w = String(s.w); s.r = String(s.r); }));
+    S.workouts = S.workouts.filter(x => x.id !== w.id); S.undo = null; S.active = a;
+    ui.sheet = null; ui.view = 'home'; save(); render(); toast('Training läuft weiter');
+  },
+  skipItem: d => {
+    const it = S.active.items[d.i]; it.skipped = !it.skipped; save(); render();
+    if (it.skipped) { const nx = S.active.items.findIndex((x, k) => k > +d.i && !x.skipped && x.sets.some(s => !s.done)); const el = nx >= 0 && document.getElementById('ex' + nx); if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150); }
+  },
+  pickVariant: async d => {
+    const i = +d.i, old = S.active.items[i]; if (old.exId === d.id) return;
+    if (old.sets.some(s => s.done) && !await ask('Abgehakte Sätze dieser Übung gehen verloren. Trotzdem wechseln?', 'Wechseln')) return;
+    const nu = itemFrom(d.id, old.sets.length || 3, old.reps || '', S.active.locationId);
+    nu.target = old.target; nu.alts = old.alts; if (old.reps) nu.reps = old.reps; if (old.note !== undefined) nu.note = old.note;
+    S.active.items[i] = nu; save(); render();
+  },
+  planAltRemove: d => { const it = ui.editPlan.items[d.i]; it.alts.splice(+d.k, 1); if (!it.alts.length) delete it.alts; render(); },
   editTime: d => { const w = S.workouts.find(x => x.id === d.id); if (!w) return;
     const dt = new Date(w.start), pad = n => String(n).padStart(2, '0');
     ui.sheet = { type: 'time', id: w.id, date: `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`, time: w.noTime ? '' : `${pad(dt.getHours())}:${pad(dt.getMinutes())}`,
@@ -641,8 +734,8 @@ const ACT = {
   },
   repeatWorkout: async d => { const w = S.workouts.find(x => x.id === d.id); if (!w) return; if (S.active && !await ask('Es läuft bereits ein Training. Ersetzen?')) return; newWorkout(w.items.map(i => itemFrom(i.exId, i.sets.length))); },
   cancelWorkout: async () => { if (await ask('Training verwerfen? Eingaben gehen verloren.')) { S.active = null; ui.rest = null; save(); render(); } },
-  finishWorkout: finish,
-  openPicker: d => { ui.sheet = { type: 'picker', target: d.target, q: '' }; render(); },
+  finishWorkout: () => finish(),
+  openPicker: d => { ui.sheet = { type: 'picker', target: d.target, q: '', ...(d.i !== undefined ? { idx: +d.i } : {}) }; render(); },
   pick: d => {
     const target = ui.sheet.target; ui.sheet_idx = ui.sheet.idx; ui.sheet = null;
     if (target === 'swap') {
@@ -651,6 +744,7 @@ const ACT = {
       if (d.id !== orig) nu.subFor = orig;
       S.active.items[i] = nu; save(); render(); return;
     }
+    if (target === 'planAlt') { const it = ui.editPlan.items[ui.sheet_idx]; if (d.id !== it.exId && !(it.alts || []).includes(d.id)) (it.alts ||= []).push(d.id); render(); return; }
     if (target === 'plan') ui.editPlan.items.push({ exId: d.id, sets: 3, reps: isCardio(d.id) ? '20' : '8–12' });
     else S.active.items.push(itemFrom(d.id, isCardio(d.id) ? 1 : 3));
     save(); render(); setTimeout(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }), 50);
@@ -677,15 +771,15 @@ const ACT = {
       if (s.w === '' && wi.placeholder) s.w = wi.placeholder;
       if (s.r === '' && ri.placeholder) s.r = ri.placeholder;
       if (num(s.r) <= 0) { toast(isCardio(S.active.items[d.i].exId) ? 'Bitte Minuten eintragen' : 'Bitte Wiederholungen eintragen'); ri.focus(); return; }
-      s.done = true;
-      if (S.settings.rest > 0) ui.rest = { end: Date.now() + S.settings.rest * 1000, total: S.settings.rest * 1000 };
+      s.done = true; s.t = Date.now();
+      if (S.settings.rest > 0 && !S.active.past) ui.rest = { end: Date.now() + S.settings.rest * 1000, total: S.settings.rest * 1000 };
       try { audioCtx ||= new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch {}
     } else s.done = false;
     save(); render();
     // Übung fertig → zur nächsten offenen Übung scrollen
     const items = S.active.items, i = +d.i;
     if (s.done && items[i].sets.every(x => x.done)) {
-      const nx = items.findIndex((it, k) => k > i && it.sets.some(x => !x.done));
+      const nx = items.findIndex((it, k) => k > i && !it.skipped && it.sets.some(x => !x.done));
       const el = nx >= 0 && document.getElementById('ex' + nx);
       if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
     }
@@ -710,18 +804,18 @@ const ACT = {
     ui.editPlan = null; if (ui.planReturn) { ui.planReturn = false; ui.view = 'home'; } save(); render(); toast('Plan gespeichert');
   },
   deletePlan: async () => { if (await ask('Plan löschen?')) { S.plans = S.plans.filter(p => p.id !== ui.editPlan.id); ui.editPlan = null; save(); render(); } },
-  newExercise: () => { const q = ui.sheet && ui.sheet.q; ui.sheet = { type: 'newEx', q, back: ui.sheet && ui.sheet.target }; render(); },
+  newExercise: () => { const q = ui.sheet && ui.sheet.q; ui.sheet = { type: 'newEx', q, back: ui.sheet && ui.sheet.target, idx: ui.sheet && ui.sheet.idx }; render(); },
   saveExercise: () => {
     const name = $('#exName').value.trim(); if (!name) return toast('Bitte einen Namen eingeben');
     if (S.exercises.some(e => e.name.toLowerCase() === name.toLowerCase())) return toast('Diese Übung gibt es schon');
     const ex = { id: uid(), name, muscle: $('#exMuscle').value, kind: $('#exKind').value, machine: $('#exKind').value !== 'cardio' && $('#exMachine').value === '1', custom: true };
     S.exercises.push(ex); const back = ui.sheet.back; save();
-    if (back === 'workout' || back === 'plan') { ui.sheet = { type: 'picker', target: back }; ACT.pick({ id: ex.id }); }
+    if (back === 'workout' || back === 'plan' || back === 'planAlt') { ui.sheet = { type: 'picker', target: back, idx: ui.sheet.idx }; ACT.pick({ id: ex.id }); }
     else { ui.sheet = null; render(); }
     toast('Übung angelegt');
   },
   deleteExercise: async d => {
-    const used = S.workouts.some(w => w.items.some(i => i.exId === d.id)) || S.plans.some(p => p.items.some(i => i.exId === d.id));
+    const used = S.workouts.some(w => w.items.some(i => i.exId === d.id)) || S.plans.some(p => p.items.some(i => i.exId === d.id || (i.alts || []).includes(d.id)));
     if (used) return toast('Wird in Trainings oder Plänen verwendet');
     if (await ask(`„${exById(d.id).name}“ löschen?`)) { S.exercises = S.exercises.filter(e => e.id !== d.id); save(); $('#pickList').innerHTML = pickList(ui.sheet.q || ''); }
   },

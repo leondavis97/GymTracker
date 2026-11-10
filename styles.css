@@ -99,6 +99,8 @@ label.field { display: block; font-size: 13px; color: var(--muted); font-weight:
 .set.done .step { background: var(--good-soft); border-color: transparent; }
 .ex { scroll-margin-top: calc(var(--safe-t) + 104px); }
 .ex-done h3 { color: var(--good); }
+.ex-skip { opacity: .6; }
+.ex-skip h3 { text-decoration: line-through; }
 .inote { margin-top: 10px; }
 .set.done .check { background: var(--good); color: #fff; }
 .target { font-size: 12px; color: var(--muted); }
